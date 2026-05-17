@@ -52,7 +52,6 @@ app.use("/api/product", productRouter);
 app.use("/api/visit", visitRouter);
 app.use("/api/address", addressRouter);
 app.use("/api/evaluation", evaluationRouter);
-
 app.use("/api/coupon", couponRouter);
 
 app.use(errorHandeler);
@@ -61,6 +60,5 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log("Server is running at PORT :::", PORT);
   connectToDB();
-
   startNgrokAndConfirmWebhook();
 });
