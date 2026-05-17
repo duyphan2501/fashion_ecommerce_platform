@@ -49,7 +49,7 @@ const CartWithItems = ({}) => {
 
   const total = calculateTotal(cartItems);
 
-  if (cartItems.length === 0) {
+  if (!cartItems || cartItems.length === 0) {
     return <EmptyCart />;
   }
 

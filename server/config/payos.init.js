@@ -21,7 +21,7 @@ const startNgrokAndConfirmWebhook = async () => {
       if (!tunnel) return console.error("No HTTPS tunnel found from ngrok");
       url = tunnel.public_url;
     } else url = process.env.BACKEND_URL;
-    const webhookUrl = `${url}/api/payment/webhook/payos`;
+    const webhookUrl = `${url}/api/order/webhook/payos`;
     await payOS.confirmWebhook(webhookUrl);
     console.log("Webhook confirmed:", webhookUrl);
   } catch (e) {

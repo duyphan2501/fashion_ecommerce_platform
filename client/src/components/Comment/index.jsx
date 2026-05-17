@@ -9,7 +9,7 @@ import { toast } from "react-toastify";
 import ConfirmDialog from "../ConfirmDialog.jsx";
 import StarCard from "../StarCard/index.jsx";
 
-const socket = io("http://localhost:3000");
+const socket = io(import.meta.env.VITE_API_URL || "http://localhost:3000");
 
 // const comment = {
 //   avatar: "https://ecommerce-frontend-view.netlify.app/user.jpg",
