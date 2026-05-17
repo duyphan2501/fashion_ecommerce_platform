@@ -49,7 +49,7 @@ const Layouts = () => {
 
   return (
     <>
-      {isLoading ? (
+      {isLoading || !user ? (
         <>
           <div className="fixed inset-0 z-50  opacity-30"></div>
           <div className="fixed inset-0 z-60 bg-white flex items-center justify-center">

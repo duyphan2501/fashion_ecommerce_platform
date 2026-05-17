@@ -39,10 +39,6 @@ const useUserStore = create((set, get) => {
         user: null,
         accessToken: null,
       });
-      toast.error(
-        error.response?.data?.message ||
-          "Token đã hết hạn. Vui lòng đăng nhập lại!"
-      );
       throw error;
     }
   };
@@ -67,7 +63,6 @@ const useUserStore = create((set, get) => {
       }
     } catch (error) {
       console.error(error);
-      toast.error("Tải dữ liệu người dùng thất bại");
     }
   };
 

@@ -76,13 +76,13 @@ const verifyAccount = async (req, res, next) => {
       // resend verification email
       await sendVerificationEmailtoUser(foundUser);
       throw CreateError.BadRequest(
-        "Mã xác minh đã hết hạn! Chúng tôi đã gửi một email xác minh mới cho bạn."
+        "Mã xác minh đã hết hạn! Chúng tôi đã gửi một email xác minh mới cho bạn.",
       );
     }
 
     if (!password || !confirmPassword)
       throw CreateError.BadRequest(
-        "Vui lòng nhập mật khẩu và xác nhận mật khẩu"
+        "Vui lòng nhập mật khẩu và xác nhận mật khẩu",
       );
     if (password !== confirmPassword)
       throw CreateError.BadRequest("Mật khẩu và xác nhận mật khẩu không khớp");
@@ -140,11 +140,11 @@ const login = async (req, res, next) => {
     // generate token and set cookie
     const accessToken = await generateAccessTokenAndSetCookie(
       res,
-      foundUser._id
+      foundUser._id,
     );
     const refreshToken = await generateRefreshTokenAndSetCookie(
       res,
-      foundUser._id
+      foundUser._id,
     );
 
     // save token in db
@@ -237,7 +237,7 @@ const resetPassword = async (req, res, next) => {
     if (foundUser.forgotPasswordTokenExpireAt < new Date()) {
       await sendForgotPasswordEmailtoUser(foundUser);
       throw CreateError.BadRequest(
-        "Đường dẫn đã hết hạn! Chúng tôi đã gửi đường dẫn mới đến bạn"
+        "Đường dẫn đã hết hạn! Chúng tôi đã gửi đường dẫn mới đến bạn",
       );
     }
 
@@ -309,7 +309,7 @@ const changePassword = async (req, res, next) => {
 
     if (newPassword !== confirmPassword)
       throw CreateError.BadRequest(
-        "Mật khẩu mới và mật khẩu xác nhận không khớp!"
+        "Mật khẩu mới và mật khẩu xác nhận không khớp!",
       );
     if (newPassword === currentPassword)
       throw CreateError.BadRequest("Mật khẩu mới phải khác mật khẩu cũ!");
@@ -320,7 +320,7 @@ const changePassword = async (req, res, next) => {
 
     const isCorrectPassword = await checkPassword(
       currentPassword,
-      user.password
+      user.password,
     );
 
     if (!isCorrectPassword) throw CreateError.Forbidden("Mật khẩu không đúng");
@@ -346,6 +346,8 @@ const refreshToken = async (req, res, next) => {
 
     // Verify refresh token
     const payload = await verifyRefreshToken(refreshToken);
+    if (!payload || !mongoose.Types.ObjectId.isValid(payload.userId))
+      throw CreateError.Unauthorized("Invalid refresh token");
     const userId = payload.userId;
 
     // Kiểm tra token còn hạn trong DB
@@ -362,7 +364,7 @@ const refreshToken = async (req, res, next) => {
     const accessToken = await generateAccessTokenAndSetCookie(res, user._id);
     const newRefreshToken = await generateRefreshTokenAndSetCookie(
       res,
-      user._id
+      user._id,
     );
 
     // save token in db
@@ -422,21 +424,21 @@ const googleLogin = async (req, res, next) => {
     // generate token and set cookie
     const accessToken = await generateAccessTokenAndSetCookie(
       res,
-      foundUser._id
+      foundUser._id,
     );
     const refreshToken = await generateRefreshTokenAndSetCookie(
       res,
-      foundUser._id
+      foundUser._id,
     );
 
     // save token in db
     foundUser.refreshToken = refreshToken;
     foundUser.refreshTokenExpireAt = new Date(
-      Date.now() + 7 * 24 * 60 * 60 * 1000
+      Date.now() + 7 * 24 * 60 * 60 * 1000,
     );
     foundUser.lastLogin = Date.now();
     await foundUser.save();
-    
+
     const guestCartId = req.cookies.cartId;
     await mergeCart(foundUser._id, guestCartId);
 
@@ -661,7 +663,7 @@ class UserController {
       const updatedAddress = await UserService.updateAddress(
         addressId,
         id,
-        req.body
+        req.body,
       );
 
       return res.status(200).json({

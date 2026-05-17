@@ -39,7 +39,7 @@ const Login = () => {
     setIsLogin(false);
 
     if (isAdminLogin) {
-      navigator("/admin/home");
+      navigator("/");
     }
   };
 
