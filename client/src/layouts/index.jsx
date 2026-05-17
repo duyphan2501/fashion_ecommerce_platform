@@ -108,7 +108,7 @@ const Layouts = () => {
             <Header />
           </div>
 
-          <main className="flex-grow">
+          <main className="grow">
             <Outlet />
           </main>
 

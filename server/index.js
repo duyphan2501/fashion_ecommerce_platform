@@ -35,11 +35,14 @@ app.use(cookieParser());
 
 app.use(
   cors({
-    origin: ["http://localhost:5173", "http://localhost:5174"],
+    origin: [process.env.CLIENT_URL, process.env.ADMIN_URL],
     credentials: true,
   })
 );
 
+app.get("/ping", (req, res) => {
+  res.status(200).send("ok");
+});
 //routes
 app.use("/api/user", userRouter);
 app.use("/api/category", categoryRouter);
