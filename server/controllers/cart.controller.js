@@ -6,6 +6,7 @@ import {
   updateCartItem,
 } from "../services/cart.service.js";
 import { v4 as uuidv4 } from "uuid";
+import { getCookieOptions } from "../helpers/cookie.helper.js";
 
 const addToCart = async (req, res, next) => {
   try {
@@ -20,10 +21,13 @@ const addToCart = async (req, res, next) => {
     } else {
       if (!cartId) {
         cartId = uuidv4();
-        res.cookie("cartId", cartId, {
-          httpOnly: true,
-          maxAge: 4 * 24 * 60 * 60 * 1000,
-        });
+        res.cookie(
+          "cartId",
+          cartId,
+          getCookieOptions({
+            maxAge: 4 * 24 * 60 * 60 * 1000,
+          })
+        );
       }
     }
     // đặt chỗ

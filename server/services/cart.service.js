@@ -1,7 +1,6 @@
 import mongoose from "mongoose";
 import redisClient from "../config/init.redis.js";
-// import { formatCartItemInfo } from "../helpers/cart.helper.js";
-import CartModel from "../models/cart.model.js";
+import ProductModel from "../models/product.model.js";
 import VariantModel from "../models/variant.model.js";
 import { getAvailableStockDB } from "./variant.service.js";
 import createHttpError from "http-errors";
@@ -9,23 +8,44 @@ import createHttpError from "http-errors";
 const USER_CART_TTL = 60 * 60 * 24 * 7; // 7 ngày
 const GUEST_CART_TTL = 60 * 60 * 24 * 4; // 4 ngày
 
+const getCartKey = (userId, guestCartId) =>
+  userId ? `cart:${userId}` : `cart:${guestCartId}`;
+
+const getCartQtyKey = (userId, guestCartId) =>
+  `${getCartKey(userId, guestCartId)}:qty`;
+
+const getProductField = (variantId, size) => `product:${variantId}:${size}`;
+
+const parseProductField = (productField) => {
+  const [, variantId, ...sizeParts] = productField.split(":");
+  const size = sizeParts.join(":");
+
+  if (!variantId || !size || !mongoose.Types.ObjectId.isValid(variantId)) {
+    return null;
+  }
+
+  return { variantId, size };
+};
+
 const addCartItem = async (userId, guestCartId, item, quantity) => {
-  if (quantity === 0) return;
+  const quantityToAdd = parseInt(quantity, 10);
+
+  if (Number.isNaN(quantityToAdd) || quantityToAdd <= 0) {
+    throw createHttpError.BadRequest("Số lượng không hợp lệ");
+  }
 
   const availableStockDB = await getAvailableStockDB(item.variantId, item.size);
 
   if (availableStockDB === 0)
     throw createHttpError.BadRequest("Sản phẩm đã hết hàng");
 
-  const productKey = `product:${item.variantId}:${item.size}`;
-  const cartKey = userId ? `cart:${userId}` : `cart:${guestCartId}`;
-  const cartKeyInfo = `${cartKey}:info`;
-  const cartKeyQty = `${cartKey}:qty`;
+  const productKey = getProductField(item.variantId, item.size);
+  const cartKeyQty = getCartQtyKey(userId, guestCartId);
 
-  const currentQtyStr = await redisClient.hGet(`${cartKey}:qty`, productKey);
+  const currentQtyStr = await redisClient.hGet(cartKeyQty, productKey);
   const currentQtyInCart = parseInt(currentQtyStr || "0", 10);
 
-  const newTotalQuantity = currentQtyInCart + quantity;
+  const newTotalQuantity = currentQtyInCart + quantityToAdd;
 
   if (newTotalQuantity > availableStockDB) {
     const remainingToAdd = availableStockDB - currentQtyInCart;
@@ -39,154 +59,131 @@ const addCartItem = async (userId, guestCartId, item, quantity) => {
 
   const TTL = userId ? USER_CART_TTL : GUEST_CART_TTL;
 
-  const productData = JSON.stringify(item);
-
   const pipeline = redisClient.multi();
-
-  pipeline.hSet(cartKeyInfo, productKey, productData);
-
-  pipeline.hIncrBy(cartKeyQty, productKey, quantity);
-
-  pipeline.expire(cartKeyInfo, TTL);
+  pipeline.hIncrBy(cartKeyQty, productKey, quantityToAdd);
   pipeline.expire(cartKeyQty, TTL);
 
   await pipeline.exec();
 };
 
-const validateCartItemsWithDB = async (items) => {
-  if (!items || items.length === 0) {
-    return { updatedItems: [], shouldUpdateRedis: false };
-  }
-
-  // Lấy danh sách variantId
-  const variantIds = items.map(
-    (item) => new mongoose.Types.ObjectId(item.variantId)
-  );
-
-  // Lấy toàn bộ variants trong DB
-  const dbVariants = await VariantModel.find({
-    _id: { $in: variantIds },
-  }).lean();
-
-  // Map để lookup nhanh
-  const dbVariantMap = new Map(dbVariants.map((v) => [v._id.toString(), v]));
-
-  let shouldUpdateRedis = false;
-  const updatedItems = [];
-
-  for (const item of items) {
-    const dbVariant = dbVariantMap.get(item.variantId.toString());
-
-    if (!dbVariant) {
-      console.warn(`Variant ${item.variantId} not found. Removing from cart.`);
-      shouldUpdateRedis = true;
-      continue;
-    }
-
-    // Tìm attribute theo size
-    const dbAttr = dbVariant.attributes.find((attr) => attr.size === item.size);
-
-    if (!dbAttr) {
-      console.warn(
-        `Size '${item.size}' not found for variant ${item.variantId}. Removing.`
-      );
-      shouldUpdateRedis = true;
-      continue;
-    }
-
-    // Lấy giá mới từ DB
-    const correctPrice = dbVariant.price;
-    const correctDiscount = dbVariant.discount;
-    const correctStock = dbAttr.inStock;
-
-    // Nếu có thay đổi → cập nhật
-    if (
-      item.price !== correctPrice ||
-      item.discount !== correctDiscount ||
-      item.inStock !== correctStock
-    ) {
-      console.log(
-        `Syncing price/stock for ${item.name} (${item.variantId}, size ${item.size})`
-      );
-
-      shouldUpdateRedis = true;
-      item.price = correctPrice;
-      item.discount = correctDiscount;
-      item.inStock = correctStock;
-    }
-
-    updatedItems.push(item);
-  }
-
-  return { updatedItems, shouldUpdateRedis };
-};
-
-const saveCartToRedis = async (cartItems, qtyKey, infoKey, TTL) => {
+const saveCartQuantitiesToRedis = async (cartItems, qtyKey, TTL) => {
   const pipeline = redisClient.multi();
   pipeline.del(qtyKey);
-  pipeline.del(infoKey);
 
   for (const item of cartItems) {
-    const productKey = `product:${item.variantId}:${item.size}`;
+    const productKey = getProductField(item.variantId, item.size);
     pipeline.hSet(qtyKey, productKey, item.quantity);
-    pipeline.hSet(infoKey, productKey, JSON.stringify(item));
   }
 
   pipeline.expire(qtyKey, TTL);
-  pipeline.expire(infoKey, TTL);
 
   await pipeline.exec();
 };
 
-const loadCart = async (userId, guestCartId) => {
-  const isUser = !!userId;
-  const cartKey = isUser ? `cart:${userId}` : `cart:${guestCartId}`;
-  const qtyKey = `${cartKey}:qty`;
-  const infoKey = `${cartKey}:info`;
-  const TTL = isUser ? USER_CART_TTL : GUEST_CART_TTL;
+const hydrateCartItems = async (quantities) => {
+  const cartRefs = [];
+  let shouldRewriteRedis = false;
 
-  // Load Redis
-  const [quantities, infos] = await Promise.all([
-    redisClient.hGetAll(qtyKey),
-    redisClient.hGetAll(infoKey),
-  ]);
+  for (const [productKey, qty] of Object.entries(quantities)) {
+    const parsedProduct = parseProductField(productKey);
+    const quantity = parseInt(qty, 10);
 
-  let cartItems = [];
-  let mustRewriteRedis = false;
-
-  if (quantities && Object.keys(quantities).length > 0) {
-    for (const [productKey, qty] of Object.entries(quantities)) {
-      let productInfo = {};
-
-      try {
-        productInfo = infos[productKey] ? JSON.parse(infos[productKey]) : null;
-
-        if (!productInfo) {
-          console.warn(`Missing product info in Redis: ${productKey}`);
-          mustRewriteRedis = true;
-          continue;
-        }
-      } catch {
-        console.warn(`Corrupted JSON in Redis key: ${productKey}`);
-        mustRewriteRedis = true;
-        continue;
-      }
-
-      cartItems.push({
-        ...productInfo,
-        quantity: Number(qty),
-      });
+    if (!parsedProduct || Number.isNaN(quantity) || quantity <= 0) {
+      console.warn(`Invalid cart item in Redis: ${productKey}`);
+      shouldRewriteRedis = true;
+      continue;
     }
 
-    // Validate items with DB
-    const result = await validateCartItemsWithDB(cartItems);
-    cartItems = result.updatedItems;
+    cartRefs.push({
+      productKey,
+      quantity,
+      ...parsedProduct,
+    });
+  }
 
-    if (result.shouldUpdateRedis || mustRewriteRedis) {
-      await saveCartToRedis(cartItems, qtyKey, infoKey, TTL);
+  if (cartRefs.length === 0) {
+    return { cartItems: [], shouldRewriteRedis };
+  }
+
+  const variantIds = [
+    ...new Set(cartRefs.map((item) => item.variantId)),
+  ].map((variantId) => new mongoose.Types.ObjectId(variantId));
+
+  const [variants, products] = await Promise.all([
+    VariantModel.find({ _id: { $in: variantIds } }).lean(),
+    ProductModel.find(
+      { variants: { $in: variantIds } },
+      { name: 1, slug: 1, variants: 1 }
+    ).lean(),
+  ]);
+
+  const variantMap = new Map(variants.map((v) => [v._id.toString(), v]));
+  const productByVariantId = new Map();
+
+  for (const product of products) {
+    for (const variantId of product.variants) {
+      productByVariantId.set(variantId.toString(), product);
+    }
+  }
+
+  const cartItems = [];
+
+  for (const item of cartRefs) {
+    const variant = variantMap.get(item.variantId);
+    const product = productByVariantId.get(item.variantId);
+
+    if (!variant || !product) {
+      console.warn(`Variant ${item.variantId} not found. Removing from cart.`);
+      shouldRewriteRedis = true;
+      continue;
+    }
+
+    const attribute = variant.attributes.find(
+      (attr) => attr.size === item.size
+    );
+
+    if (!attribute) {
+      console.warn(
+        `Size '${item.size}' not found for variant ${item.variantId}. Removing.`
+      );
+      shouldRewriteRedis = true;
+      continue;
+    }
+
+    cartItems.push({
+      variantId: item.variantId,
+      name: product.name,
+      size: item.size,
+      price: variant.price,
+      discount: variant.discount,
+      color: variant.color,
+      image: variant.images[0],
+      inStock: attribute.inStock,
+      slug: product.slug,
+      quantity: item.quantity,
+    });
+  }
+
+  return { cartItems, shouldRewriteRedis };
+};
+
+const loadCart = async (userId, guestCartId) => {
+  const isUser = !!userId;
+  const qtyKey = getCartQtyKey(userId, guestCartId);
+  const TTL = isUser ? USER_CART_TTL : GUEST_CART_TTL;
+
+  const quantities = await redisClient.hGetAll(qtyKey);
+
+  let cartItems = [];
+
+  if (quantities && Object.keys(quantities).length > 0) {
+    const result = await hydrateCartItems(quantities);
+    cartItems = result.cartItems;
+
+    if (result.shouldRewriteRedis) {
+      await saveCartQuantitiesToRedis(cartItems, qtyKey, TTL);
     } else {
-      // Renew TTL
-      await redisClient.multi().expire(qtyKey, TTL).expire(infoKey, TTL).exec();
+      await redisClient.expire(qtyKey, TTL);
     }
   }
 
@@ -205,60 +202,46 @@ const mergeCart = async (userId, guestCartId) => {
   const userCartKey = `cart:${userId}`;
   const guestCartKey = `cart:${guestCartId}`;
 
-  const userCartInfoKey = `${userCartKey}:info`;
   const userCartQtyKey = `${userCartKey}:qty`;
-  const guestCartInfoKey = `${guestCartKey}:info`;
   const guestCartQtyKey = `${guestCartKey}:qty`;
 
-  const guestCartExists = await redisClient.exists(guestCartInfoKey);
+  const guestCartExists = await redisClient.exists(guestCartQtyKey);
   if (!guestCartExists) {
-    await redisClient.del(guestCartKey, guestCartInfoKey, guestCartQtyKey);
+    await redisClient.del(guestCartKey, guestCartQtyKey);
     return;
   }
 
-  const guestCartItems = await redisClient.hGetAll(guestCartInfoKey);
   const guestCartQuantities = await redisClient.hGetAll(guestCartQtyKey);
 
-  if (Object.keys(guestCartItems).length === 0) {
-    await redisClient.del(guestCartKey, guestCartInfoKey, guestCartQtyKey);
+  if (Object.keys(guestCartQuantities).length === 0) {
+    await redisClient.del(guestCartKey, guestCartQtyKey);
     return;
   }
 
   const pipeline = redisClient.multi();
-  for (const productKey in guestCartItems) {
-    const itemData = guestCartItems[productKey];
+  for (const productKey in guestCartQuantities) {
     const quantity = parseInt(guestCartQuantities[productKey], 10);
 
-    pipeline.hSet(userCartInfoKey, productKey, itemData);
-    pipeline.hIncrBy(userCartQtyKey, productKey, quantity);
+    if (!Number.isNaN(quantity) && quantity > 0) {
+      pipeline.hIncrBy(userCartQtyKey, productKey, quantity);
+    }
   }
 
-  pipeline.expire(userCartInfoKey, USER_CART_TTL);
   pipeline.expire(userCartQtyKey, USER_CART_TTL);
-  await redisClient.del(guestCartInfoKey);
-  await redisClient.del(guestCartQtyKey);
+  pipeline.del(guestCartQtyKey);
 
   await pipeline.exec();
 };
 
 const removeCartItem = async (userId, guestCartId, variantId, size) => {
-  const cartKey = userId ? `cart:${userId}` : `cart:${guestCartId}`;
-  const cartKeyInfo = `${cartKey}:info`;
-  const cartKeyQty = `${cartKey}:qty`;
-  const productId = `${variantId}:${size}`;
-  const productField = `product:${productId}`;
+  const cartKeyQty = getCartQtyKey(userId, guestCartId);
+  const productField = getProductField(variantId, size);
 
-  const pipeline = redisClient.multi();
-
-  pipeline.hDel(cartKeyInfo, productField);
-  pipeline.hDel(cartKeyQty, productField);
-
-  await pipeline.exec();
+  await redisClient.hDel(cartKeyQty, productField);
 
   const remainingItems = await redisClient.hLen(cartKeyQty);
   if (remainingItems === 0) {
     // Sử dụng UNLINK để xóa không đồng bộ, tránh block Redis server
-    await redisClient.unlink(cartKeyInfo);
     await redisClient.unlink(cartKeyQty);
   }
 };
@@ -270,6 +253,10 @@ const updateCartItem = async (
   size,
   newQuantity
 ) => {
+  if (Number.isNaN(newQuantity) || newQuantity <= 0) {
+    throw createHttpError.BadRequest("Số lượng không hợp lệ");
+  }
+
   const availableStockDB = await getAvailableStockDB(variantId, size);
 
   if (availableStockDB === 0)
@@ -277,13 +264,18 @@ const updateCartItem = async (
 
   const cartKey = userId ? `cart:${userId}` : `cart:${guestCartId}`;
   const cartKeyQty = `${cartKey}:qty`;
-  const productKey = `product:${variantId}:${size}`;
+  const productKey = getProductField(variantId, size);
+  const TTL = userId ? USER_CART_TTL : GUEST_CART_TTL;
 
   if (newQuantity > availableStockDB) {
     throw createHttpError.BadRequest("Không đủ số lượng để thêm vào giỏ hàng");
   }
 
-  await redisClient.hSet(cartKeyQty, productKey, newQuantity);
+  await redisClient
+    .multi()
+    .hSet(cartKeyQty, productKey, newQuantity)
+    .expire(cartKeyQty, TTL)
+    .exec();
 };
 
 export { addCartItem, loadCart, mergeCart, removeCartItem, updateCartItem };

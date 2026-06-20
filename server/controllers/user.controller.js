@@ -20,6 +20,7 @@ import { verifyToken } from "../helpers/googleAuth.helper.js";
 import { mergeCart } from "../services/cart.service.js";
 import UserService from "../services/user.service.js";
 import AddressModel from "../models/address.model.js";
+import mongoose from "mongoose";
 
 const signUp = async (req, res, next) => {
   try {

@@ -4,10 +4,6 @@ import { sendOrderConfirmEmail } from '../helpers/email.helper.js';
 dotenv.config({quiet: true})
 
 const REDIS_CHANNEL = "order_events"
-console.log("username", process.env.REDIS_USERNAME)
-console.log("password", process.env.REDIS_PASSWORD)
-console.log("host", process.env.REDIS_HOST)
-console.log("port", process.env.REDIS_PORT)
 
 const client = createClient({
     username: process.env.REDIS_USERNAME,
